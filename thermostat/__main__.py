@@ -38,8 +38,8 @@ if __name__ == '__main__':
     signal.signal(signal.SIGHUP, __signal_handler)
 
     Mqtt({'mqtt': {'clientid': 'thermostat'}})
-    Settings()
     Control()
+    Settings()
 
     Mqtt.instance().connect()
 

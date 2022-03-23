@@ -7,12 +7,18 @@ from project_common.logger import logger
 from project_common.mqtt import Mqtt, mqtt
 
 from .config import Config
-from . import settings
-from .settings import Settings
 from . import sht3x
 from . import relays
 from . import fan
 
+
+MODE_OFF = 'off'
+MODE_AUTO = 'auto'
+MODE_HEAT = 'heat'
+MODE_COOL = 'cool'
+MODE_ON = 'on'
+
+FAN = 'fan'
 
 TEMPERATURE = 'temperature'
 HUMIDITY = 'humidity'
@@ -52,6 +58,11 @@ class Control():
         Mqtt.instance().register_on_disconnect(self.__on_disconnect)
         Mqtt.instance().will_set(self.__topic,payload=OOS,qos=2)
 
+        self.__mode = None
+        self.__heat = None
+        self.__cool = None
+        self.__blower = MODE_AUTO
+
         self.__stop_event = threading.Event()
         self.__thread = threading.Thread(target=self.__thread_run,name='control')
         self.__thread.start()
@@ -66,6 +77,22 @@ class Control():
         self.__relay.close()
         self.__sht.stop()
         self.__fan.off()
+
+
+    def set_mode(self, mode: str):
+        self.__mode = mode
+
+
+    def set_blower(self, blower: str):
+        self.__blower = blower
+
+
+    def set_heat(self, heat: float):
+        self.__heat = heat
+
+
+    def set_cool(self, cool: float):
+        self.__cool = cool
 
 
     def __on_connect(self,client, userdata, flags, rc):
@@ -83,7 +110,7 @@ class Control():
         self.__fan.on()
         self.__fan.set_pwm_duty(Config.instance().fan_pwm_duty())
 
-        last_status = {TEMPERATURE: 0.0, HUMIDITY: 0.0, STATE: STATE_IDLE, OUTPUT: relays.RELAY_STATUS_STR[relays.RELAY_STATUS_OFF], settings.FAN: Settings.instance().get_fan(), FAN_STATE: relays.RELAY_STATUS_STR[relays.RELAY_STATUS_OFF]}
+        last_status = {TEMPERATURE: 0.0, HUMIDITY: 0.0, STATE: STATE_IDLE, OUTPUT: relays.RELAY_STATUS_STR[relays.RELAY_STATUS_OFF], FAN: MODE_OFF, FAN_STATE: relays.RELAY_STATUS_STR[relays.RELAY_STATUS_OFF]}
 
         while not self.__stop_event.is_set():
             time_in = time.monotonic()
@@ -112,13 +139,11 @@ class Control():
                         logger.error(f'Relay controller status did not reset code={mcusr}')
 
             temp = self.__sht.temperature(sht3x.UNITS_CELCIUS)
-            if not temp is None:
+            if not temp is None and not self.__mode is None and not self.__blower is None and not self.__heat is None and not self.__cool is None:
                 temp = round(temp + 0.0001,3)
                 humid = round(self.__sht.humidity() + 0.01,1)
                 self.__log_sht(temp,humid)
 
-                mode = Settings.instance().get_mode()
-                fan = Settings.instance().get_fan()
                 state = last_status[STATE]
 
                 fan_state = relays.RELAY_STATUS_STR[relay_status[relays.RELAY_FAN]]
@@ -130,22 +155,22 @@ class Control():
                 else:
                     output = relays.RELAY_STATUS_STR[relays.RELAY_STATUS_OFF]
 
-                if mode == settings.MODE_OFF:
+                if self.__mode == MODE_OFF:
                     state = STATE_IDLE
 
-                if mode == settings.MODE_COOL or mode == settings.MODE_AUTO:
-                    if (mode == settings.MODE_COOL or state == settings.MODE_COOL) and temp <= Settings.instance().get_setpoint(settings.MODE_COOL):
+                if self.__mode == MODE_COOL or self.__mode == MODE_AUTO:
+                    if (self.__mode == MODE_COOL or state == MODE_COOL) and temp <= self.__cool:
                         state = STATE_IDLE
-                    if temp >= (Settings.instance().get_setpoint(settings.MODE_COOL) + Config.instance().temp_hysteresis()):
-                        state = settings.MODE_COOL
+                    if temp >= (self.__cool + Config.instance().temp_hysteresis()):
+                        state = MODE_COOL
 
-                if mode == settings.MODE_HEAT or mode == settings.MODE_AUTO:
-                    if (mode == settings.MODE_HEAT or state == settings.MODE_HEAT) and temp >= (Settings.instance().get_setpoint(settings.MODE_HEAT) + Config.instance().temp_hysteresis()):
+                if self.__mode == MODE_HEAT or self.__mode == MODE_AUTO:
+                    if (self.__mode == MODE_HEAT or state == MODE_HEAT) and temp >= (self.__heat + Config.instance().temp_hysteresis()):
                         state = STATE_IDLE
-                    if temp <= Settings.instance().get_setpoint(settings.MODE_HEAT):
-                        state = settings.MODE_HEAT
+                    if temp <= self.__heat:
+                        state = MODE_HEAT
 
-                if state == settings.MODE_COOL:
+                if state == MODE_COOL:
                     if relay_status[relays.RELAY_HEAT] == relays.RELAY_STATUS_ON:
                         state = STATE_IDLE
                         logger.warning('Cooling wanted while heat is on.')
@@ -161,7 +186,7 @@ class Control():
                         elif output != last_status[OUTPUT]:
                             logger.info(f'Cooling relay changed state to {output}.')
 
-                if state == settings.MODE_HEAT:
+                if state == MODE_HEAT:
                     if relay_status[relays.RELAY_COOL] == relays.RELAY_STATUS_ON:
                         state = STATE_IDLE
                         logger.warning('Heating wanted while cooling is on.')
@@ -187,15 +212,15 @@ class Control():
                         if output != last_status[OUTPUT]:
                             logger.info('Heating turned off.')
 
-                if (state == STATE_IDLE or output == relays.RELAY_STATUS_STR[relays.RELAY_STATUS_LOCKED]) and fan == settings.MODE_AUTO and relay_status[relays.RELAY_FAN] == relays.RELAY_STATUS_ON:
+                if (state == STATE_IDLE or output == relays.RELAY_STATUS_STR[relays.RELAY_STATUS_LOCKED]) and self.__blower == MODE_AUTO and relay_status[relays.RELAY_FAN] == relays.RELAY_STATUS_ON:
                     fan_state = self.__relay_off(relays.RELAY_FAN)
                     logger.info('Fan turned off.')
-                if (state != STATE_IDLE and output != relays.RELAY_STATUS_STR[relays.RELAY_STATUS_LOCKED]) or fan == settings.MODE_ON:
+                if (state != STATE_IDLE and output != relays.RELAY_STATUS_STR[relays.RELAY_STATUS_LOCKED]) or self.__blower == MODE_ON:
                     fan_state = self.__relay_on(relays.RELAY_FAN)
                     if last_status[FAN_STATE] != relays.RELAY_STATUS_STR[relays.RELAY_STATUS_ON]:
                         logger.info(f'Fan turned on with relay status of {fan_state}.')
 
-                status = {TEMPERATURE: temp if not temp is None else 0.0, HUMIDITY: humid if not humid is None else 0.0, STATE: state, OUTPUT: output, settings.FAN: fan, FAN_STATE: fan_state}
+                status = {TEMPERATURE: temp if not temp is None else 0.0, HUMIDITY: humid if not humid is None else 0.0, STATE: state, OUTPUT: output, FAN: self.__blower, FAN_STATE: fan_state}
 
                 if status != last_status:
                     self.__publish(status)
