@@ -165,9 +165,9 @@ class Control():
                         state = MODE_COOL
 
                 if self.__mode == MODE_HEAT or self.__mode == MODE_AUTO:
-                    if (self.__mode == MODE_HEAT or state == MODE_HEAT) and temp >= (self.__heat + Config.instance().temp_hysteresis()):
+                    if (self.__mode == MODE_HEAT or state == MODE_HEAT) and temp >= self.__heat:
                         state = STATE_IDLE
-                    if temp <= self.__heat:
+                    if temp <= (self.__heat - Config.instance().temp_hysteresis()):
                         state = MODE_HEAT
 
                 if state == MODE_COOL:

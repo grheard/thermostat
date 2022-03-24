@@ -10,7 +10,6 @@ from .control import Control
 
 
 MODE = 'mode'
-SETPOINT = 'setpoint'
 
 
 class Settings():
@@ -28,9 +27,7 @@ class Settings():
     CMD_GET_FAN = 'get-fan'
     CMD_PUT_FAN = 'put-fan'
 
-    AUTO_TEMP_DELTA = 1.111
-
-    DEFAULT_SETTINGS = {MODE: control.MODE_OFF, SETPOINT: {control.MODE_HEAT: 22.22, control.MODE_COOL: 23.889}}
+    DEFAULT_SETTINGS = {MODE: control.MODE_OFF, control.MODE_HEAT: 22.22, control.MODE_COOL: 23.889}
 
     __instance = None
 
@@ -57,7 +54,6 @@ class Settings():
                 s = json.load(f)
                 self.__validate_mode(s)
                 self.__validate_setpoint(s)
-                self.__settings = dict(s)
         except Exception as ex:
             logger.warning(f'Could not read/interpret file: \'{Config.instance().settings_file()}\'')
             logger.debug(ex)
@@ -133,13 +129,11 @@ class Settings():
         try:
             self.__validate_mode(payload)
             self.__validate_setpoint(payload)
-            self.__validate_auto(payload)
         except Exception as ex:
             logger.warning(ex)
             logger.debug(f'Settings message is incorrect: \'{json.dumps(payload)}\'')
             self.__publish({Settings.CMD: Settings.CMD_PUT_SETTINGS, Settings.RESULT: Settings.RESULT_FAIL})
         else:
-            self.__settings = dict(payload)
             self.__set_push()
             self.__publish({Settings.CMD: Settings.CMD_PUT_SETTINGS, Settings.RESULT: Settings.RESULT_OK})
             # Save the settings file.
@@ -171,43 +165,42 @@ class Settings():
 
 
     def __validate_mode(self,payload: dict):
-        if not MODE in payload:
-            raise KeyError('Mode key missing.')
-        if not isinstance(payload[MODE],str):
-            raise TypeError('Mode is not type string.')
-        mode = payload[MODE]
-        if mode != control.MODE_OFF \
-            and mode != control.MODE_AUTO \
-            and mode != control.MODE_COOL \
-            and mode != control.MODE_HEAT:
-            raise ValueError(f'Mode is unknown value \'{mode}\'')
+        if MODE in payload:
+            if not isinstance(payload[MODE],str):
+                raise TypeError('Mode is not type string.')
+            mode = payload[MODE]
+            if mode != control.MODE_OFF \
+                and mode != control.MODE_AUTO \
+                and mode != control.MODE_COOL \
+                and mode != control.MODE_HEAT:
+                raise ValueError(f'Mode is unknown value \'{mode}\'')
+            self.__settings[MODE] = mode
 
 
     def __validate_setpoint(self,payload: dict):
-        if not SETPOINT in payload:
-            raise KeyError('Setpoint key missing.')
-        if not isinstance(payload[SETPOINT],dict):
-            raise TypeError('Setpoint is not type dict.')
-        if not control.MODE_HEAT in payload[SETPOINT]:
-            raise KeyError('Heat key missing in setpoint.')
-        if not isinstance(payload[SETPOINT][control.MODE_HEAT],float):
-            # Some json encoders (Qt) will turn doubles/floats into integers
-            # if there is no decimal place (ie 25.0 becomes 25 in the json output)
-            if not isinstance(payload[SETPOINT][control.MODE_HEAT],int):
-                raise TypeError('Setpoint heat is not type float or integer.')
-        if not control.MODE_COOL in payload[SETPOINT]:
-            raise KeyError('Cool key missing in setpoint.')
-        if not isinstance(payload[SETPOINT][control.MODE_COOL],float):
-            # Some json encoders (Qt) will turn doubles/floats into integers
-            # if there is no decimal place (ie 25.0 becomes 25 in the json output)
-            if not isinstance(payload[SETPOINT][control.MODE_COOL],int):
-                raise TypeError('Setpoint cool is not type float or integer.')
+        if control.MODE_HEAT in payload:
+            if not isinstance(payload[control.MODE_HEAT],float):
+                # Some json encoders (Qt) will turn doubles/floats into integers
+                # if there is no decimal place (ie 25.0 becomes 25 in the json output)
+                if not isinstance(payload[control.MODE_HEAT],int):
+                    raise TypeError('Setpoint heat is not type float or integer.')
+            self.__settings[control.MODE_HEAT] = payload[control.MODE_HEAT]
 
+            # Correct cool setpoint for imposed delta.
+            if self.__settings[control.MODE_HEAT] + Config.instance().auto_temp_delta() > self.__settings[control.MODE_COOL]:
+                self.__settings[control.MODE_COOL] = self.__settings[control.MODE_HEAT] + Config.instance().auto_temp_delta()
 
-    def __validate_auto(self,payload: dict):
-        if payload[MODE] == control.MODE_AUTO:
-            if (payload[SETPOINT][control.MODE_COOL] - Settings.AUTO_TEMP_DELTA) <= payload[SETPOINT][control.MODE_HEAT]:
-                raise ValueError(f'Setpoints do not meet the delta of {Settings.AUTO_TEMP_DELTA:1.2f}C')
+        if control.MODE_COOL in payload:
+            if not isinstance(payload[control.MODE_COOL],float):
+                # Some json encoders (Qt) will turn doubles/floats into integers
+                # if there is no decimal place (ie 25.0 becomes 25 in the json output)
+                if not isinstance(payload[control.MODE_COOL],int):
+                    raise TypeError('Setpoint cool is not type float or integer.')
+            self.__settings[control.MODE_COOL] = payload[control.MODE_COOL]
+
+            # Correct heat setpoint for imposed delta.
+            if self.__settings[control.MODE_HEAT] + Config.instance().auto_temp_delta() > self.__settings[control.MODE_COOL]:
+                self.__settings[control.MODE_HEAT] = self.__settings[control.MODE_COOL] - Config.instance().auto_temp_delta()
 
 
     def __validate_fan(self,payload: dict):
@@ -232,8 +225,8 @@ class Settings():
     def __push_settings(self):
         logger.debug('Pushing settings.')
         Control.instance().set_mode(self.__settings[MODE])
-        Control.instance().set_cool(self.__settings[SETPOINT][control.MODE_COOL])
-        Control.instance().set_heat(self.__settings[SETPOINT][control.MODE_HEAT])
+        Control.instance().set_cool(self.__settings[control.MODE_COOL])
+        Control.instance().set_heat(self.__settings[control.MODE_HEAT])
 
 
     def __set_push(self):

@@ -14,8 +14,10 @@ FAN_PWM_DUTY = 'fan-pwm-duty'
 SETTINGS_FILE = 'settings-file'
 TEMP_SAMPLES = 'temp-samples'
 TEMP_HYSTERESIS = 'temp-hysteresis'
+AUTO_TEMP_DELTA = 'auto-temp-delta'
 TEMP_SAMPLES_DEFAULT = 150
 TEMP_HYSTERESIS_DEFAULT = 0.2778
+AUTO_TEMP_DELTA = 0.5556
 FAN_PWM_DUTY_DEFAULT = 50
 
 
@@ -45,6 +47,7 @@ class Config():
         self.__logger_config = None
         self.__temp_samples = TEMP_SAMPLES_DEFAULT
         self.__temp_hysteresis = TEMP_HYSTERESIS_DEFAULT
+        self.__auto_temp_delta = AUTO_TEMP_DELTA
 
         self.__fan_rpm_gpio = None
         self.__fan_pwm_module = None
@@ -94,7 +97,12 @@ class Config():
                     self.__temp_samples = config[THERMOSTAT][TEMP_SAMPLES]
 
                 if TEMP_HYSTERESIS in config[THERMOSTAT]:
-                    self.__temp_hysteresis = config[THERMOSTAT][TEMP_HYSTERESIS]
+                    if config[THERMOSTAT][TEMP_HYSTERESIS] > TEMP_HYSTERESIS_DEFAULT:
+                        self.__temp_hysteresis = config[THERMOSTAT][TEMP_HYSTERESIS]
+
+                if AUTO_TEMP_DELTA in config[THERMOSTAT]:
+                    if config[THERMOSTAT][AUTO_TEMP_DELTA] > AUTO_TEMP_DELTA:
+                        self.__auto_temp_delta = config[THERMOSTAT][AUTO_TEMP_DELTA]
 
         if not hasattr(self,'_Config__sht3x_device'):
             raise Exception('SHT3X device configuration must exist.')
@@ -162,3 +170,7 @@ class Config():
 
     def temp_hysteresis(self) -> float:
         return self.__temp_hysteresis
+
+
+    def auto_temp_delta(self) -> float:
+        return self.__auto_temp_delta
