@@ -110,6 +110,8 @@ class Control():
         self.__fan.on()
         self.__fan.set_pwm_duty(Config.instance().fan_pwm_duty())
 
+        out_of_service = True
+
         last_status = {TEMPERATURE: 0.0, HUMIDITY: 0.0, STATE: STATE_IDLE, OUTPUT: relays.RELAY_STATUS_STR[relays.RELAY_STATUS_OFF], FAN: MODE_OFF, FAN_STATE: relays.RELAY_STATUS_STR[relays.RELAY_STATUS_OFF]}
 
         while not self.__stop_event.is_set():
@@ -225,6 +227,13 @@ class Control():
                 if status != last_status:
                     self.__publish(status)
                     last_status = dict(status)
+                    out_of_service = False
+
+            else:
+                if not out_of_service:
+                    out_of_service = True
+                    # Let the broker know something is wrong.
+                    Mqtt.instance().publish(self.__topic,payload=OOS,qos=2)
 
             # Try and get close to once-per-second periodicity.
             time_left =  round(1.0 - (time.monotonic() - time_in),3)

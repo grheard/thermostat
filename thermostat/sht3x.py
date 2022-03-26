@@ -3,6 +3,7 @@ import fcntl
 import threading
 import collections
 import select
+from time import sleep
 
 from project_common.logger import logger
 
@@ -85,46 +86,54 @@ class Sht3x():
 
 
     def __run(self):
-        fd = None
-        try:
-            fd = os.open(f'/dev/{self.__device}',os.O_RDONLY)
-        except Exception as ex:
-            logger.critical(ex)
-            return
-
-        if fcntl.ioctl(fd,SHT3X_MEASUREMENT_MODE,self.__mode) != 0:
-            logger.critical(f'device {self.__device} could not be set to measurement mode {self.__mode}')
-            os.close(fd)
-            return
-
-        sample_array = collections.deque()
-
-        logger.info(f'Started with temp sample size of {self.__samples}')
-
         while not self.__event.is_set():
-            (rlist,_,_) = select.select([fd],[],[],3)
-            if len(rlist) != 0:
-                data = os.read(fd,6)
-                if len(data) != 6:
-                    logger.warning(f'Incorrect amount of data returned. Read {len(data)}, expected 6.')
-                else:
-                    tcounts = (data[0] << 8) | data[1]
-                    sample_array.append(tcounts)
+            fd = None
+            try:
+                fd = os.open(f'/dev/{self.__device}',os.O_RDONLY)
+                if fcntl.ioctl(fd,SHT3X_MEASUREMENT_MODE,self.__mode) != 0:
+                    raise Exception(f'device {self.__device} could not be set to measurement mode {self.__mode}')
+            except Exception as ex:
+                logger.critical(ex)
+                if not fd is None:
+                    os.close(fd)
+                sleep(1.0)
+                continue
 
-                    if len(sample_array) > self.__samples:
-                        sample_array.popleft()
+            sample_array = collections.deque()
 
-                    # if len(sample_array) == self.__samples:
-                    tcounts = 0
-                    for _counts in sample_array:
-                        tcounts += _counts
-                    tcounts /= len(sample_array)
-                    self.__tempcounts = tcounts
+            logger.info(f'Started with temp sample size of {self.__samples}')
 
-                    self.__humidity = 100 * (((data[3] << 8) | data[4]) / 65535)
+            while not self.__event.is_set():
+                try:
+                    (rlist,_,_) = select.select([fd],[],[],3)
+                    if len(rlist) != 0:
+                        data = os.read(fd,6)
+                        if len(data) != 6:
+                            raise Exception(f'Incorrect amount of data returned. Read {len(data)}, expected 6.')
+                        else:
+                            tcounts = (data[0] << 8) | data[1]
+                            sample_array.append(tcounts)
 
-            else:
-                # Log the unexpected timeout waiting for data to read.
-                logger.warning('Unexpected timeout waiting for sensor data.')
+                            if len(sample_array) > self.__samples:
+                                sample_array.popleft()
 
-        os.close(fd)
+                            # if len(sample_array) == self.__samples:
+                            tcounts = 0
+                            for _counts in sample_array:
+                                tcounts += _counts
+                            tcounts /= len(sample_array)
+                            self.__tempcounts = tcounts
+
+                            self.__humidity = 100 * (((data[3] << 8) | data[4]) / 65535)
+
+                    else:
+                        # Log the unexpected timeout waiting for data to read.
+                        raise Exception('Unexpected timeout waiting for sensor data.')
+
+                except Exception as ex:
+                    logger.critical(ex)
+                    sample_array.clear()
+                    self.__tempcounts = None
+                    break
+
+            os.close(fd)
